@@ -1,0 +1,82 @@
+#!/usr/bin/env ruby
+# coding: utf-8
+# vim: ts=2 et sw=2 sts=2
+#
+# ckb/ckbd.rb - The custom keybaord daemon.
+# 
+# © Copyright Piotr S. Staszewski 2013
+# Visit http://www.drbig.one.pl for contact information.
+#
+
+%w{ logger optparse }.each {|g| require g }
+%w{ keyboard }.each {|s| require_relative '../lib/' + s + '.rb' }
+
+config = {
+  :dev => false,
+  :logout => 'ckbd.log',
+  :loglevel => Logger::INFO,
+  :daemon => true,
+  :pidfile => false
+}
+
+op = OptionParser.new do |o|
+  o.banner = "Usage:\n    #{$0} [OPTION…] KEYMAP-FILE\n\nOptions:"
+  o.on('-h', '--help', 'Display this message') { puts o; exit 2 }
+  o.on('-v', '--verbose', 'Show debug output') { config[:loglevel] = Logger::DEBUG }
+  o.on('-n', '--node PATH', 'Path to device node (from KEYMAP-FILE)') {|a| config[:dev] = a }
+  o.on('-l', '--log PATH', 'Path to log file (ckbd.log)') {|a| config[:logout] = a }
+  o.on('-p', '--pid PATH', 'Path to pid file (none)') {|a| config[:pidfile] = a }
+  o.on('-d', '--[no-]daemon', 'Fork into background (true)') do |a|
+    config[:daemon] = a
+    config[:logout] = STDERR unless a
+  end
+end
+op.parse!
+
+if ARGV.length != 1
+  STDERR.puts op
+  exit(2)
+end
+keymap = File.expand_path(ARGV.shift, Dir.pwd)
+require_relative keymap
+
+if config[:dev]
+  dev = File.expand_path(config[:dev], Dir.pwd)
+else
+  dev = DEV
+end
+kb = Keyboard.new(dev)
+
+logger = Logger.new(config[:logout])
+logger.level = config[:loglevel]
+logger.info "Loaded keymap file from #{keymap}"
+logger.info "Reading events from #{dev}"
+
+if config[:daemon]
+  pid = fork
+  if pid
+    File.open(config[:pidfile], 'w') {|f| f.puts pid } if config[:pidfile]
+    logger.info "Forked into background (#{pid})"
+    exit(0)
+  end
+end
+
+Signal.trap('TERM') { logger.warn 'Exiting on SIGTERM'; exit(0) }
+
+begin
+  while code = kb.read_key
+    logger.info "Received event #{code} => #{KEYMAP[code] or 'UNKNOWN'}"
+    begin
+      ret = CODE[KEYMAP[code]].call if KEYMAP.has_key? code
+    rescue Exception => e
+      logger.error 'Error running code!'
+      logger.debug e.to_s
+      logger.debug e.backtrace.join("\n")
+    else
+      logger.debug "RET: '#{ret}'"
+    end
+  end
+rescue Errno::ENODEV
+  logger.fatal 'Device node vanished, exiting...'
+  exit(127)
+end

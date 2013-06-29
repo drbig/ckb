@@ -1,0 +1,60 @@
+#!/usr/bin/env ruby
+# coding: utf-8
+# vim: ts=2 et sw=2 sts=2
+#
+# ckb/mkmap.rb - Interactively make keymap template.
+# 
+# © Copyright Piotr S. Staszewski 2013
+# Visit http://www.drbig.one.pl for contact information.
+#
+
+%w{ keyboard }.each {|s| require_relative '../lib/' + s + '.rb' }
+
+if ARGV.length != 2
+  STDERR.puts "Usage: #{$0} /dev/input/eventX /path/to/keymap"
+  exit(2)
+end
+
+kb = Keyboard.new(ARGV.shift)
+path = File.expand_path(ARGV.shift, Dir.pwd)
+if File.exists? path
+  STDERR.puts 'Keymap file already exists!'
+  exit(2)
+end
+out = File.open(path, 'w')
+
+out.puts "# ckb keymap file
+#
+# Created at #{Time.now} with input from #{kb.dev.path}.
+#
+
+DEV = '#{kb.dev.path}'
+
+STATE = {
+}
+
+KEYMAP = {
+"
+
+puts "Use simple strings for key names.\nCTRL-C at any time to finish.\n\n"
+keymap = Hash.new
+
+begin
+  loop do
+    print 'LABEL: '
+    label = readline.chop.gsub(/ /, '_').upcase.to_s
+    print 'PRESS KEY'
+    code = kb.read_key
+    puts "\n=> :#{label} = #{code}\n\n"
+    keymap[label] = code
+  end
+rescue Interrupt
+  puts "\n\n"
+  print 'Writing template...'
+  keymap.each_pair {|k, v| out.puts "\t#{v} => :#{k}," }
+  out.puts "}\n\nCODE = {\n"
+  keymap.keys.sort.each {|k| out.puts "\t:#{k} => Proc.new { },"}
+  out.puts "}"
+  out.close
+  puts "done."
+end
